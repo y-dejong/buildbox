@@ -1,0 +1,129 @@
+Core selling point:
+Take any project, build it in a container with its dependencies, then export the result back to the host <-- crappy, same niche as pkgbuild/flatpak
+
+If the build breaks, it breaks in a container that the user can then open up and try to use <-- implied with development environment
+
+User can provide the project as a directory, a git url, or a tarball
+
+---
+
+Invoking:
+If invoked with no options, find the bbfile and parse it for options
+
+--before [filename]		is a bash script to run on the host before copying the project into the container
+--build [filename] 		is a bash script to run as the container starts
+--start 				starts the container, runs build, detaches, and prints the command to attach to the shell
+--after [filename] 		is an executable to run on the host after the build finishes
+
+
+----
+
+Stripped down version, for development and tweaking
+
+Just an alias around creating a new container with a bind mount (-v), installing build dependencies, and starting a terminal
+Have a build script, and an export script
+
+Should feel like:
+buildbox --bind https://github.com/y-dejong/thing.git libjpeg libsdl2
+buildbox --bind thing/ libjpeg libsdl2
+
+OR
+
+In file:
+BIND
+REPO https://github.com/y-dejong/thing.git
+
+DEPENDENCIES
+libjpeg
+libsdl2
+
+----
+
+Stripped down version for installing a program
+
+create a new container, install all the build dependencies, copy in or download the source code, compile it, export it
+With one command
+
+buildbox --before download.sh --build build.sh --after install.sh --deps dependencies.txt project_dir/
+
+OR
+
+In file:
+PROJECTDIR project_dir
+
+DEPS dependencies.txt
+BEFORE download.sh
+AFTER install.sh
+
+OR
+
+In file:
+PROJECTDIR project_dir
+
+BEFORE
+wget asdfasdf
+tar xvf asdfasdf
+cd asdfasdf
+./domycustomsetup
+
+BUILD
+./configure
+make
+make install
+
+AFTER
+asdf
+
+EXPORT build/ /usr/local/
+
+----
+
+Either a repo can be provided or a project dir
+If both are provided, clone the repo into the project dir
+Project dir defaults to .
+
+---------------
+
+PIVOT IDEA:
+
+Create a containerized development environment for your app, seamlessly
+
+A directory has a buildbox file in it that describes the image and environment
+
+`buildbox create` -- create the Dockerfile and Docker image for your container
+`buildbox build` -- spin up a new container with the image and run a build script
+`buildbox run` -- spin up a new container with the image and run a run script
+`buildbox shell` -- spin up a container and return the shell
+
+buildbox file fields:
+NAME [name] # defaults to the name of CWD
+BASEIMAGE
+SETUP # Run in dockerfile
+PREBUILD # Run on host before starting container
+BUILD # Run in container
+RUN # Run in container
+
+Create:
+`buildbox create` -- reads from ./buildbox, creates docker image, binds to current directory
+`buildbox create ./project_dir[/buildbox]` -- creates an image using the buildbox in project_dir, and binds to that directory
+`buildbox libsdl2 libjpeg pixman` -- creates an image with the listed packages as dependencies
+`buildbox create ./project_dir libsdl2 libjpeg` -- creates an image bound to project_dir with the listed dependencies
+
+Build:
+`buildbox build` -- run a container based on the project in the current dir, run the build script in the container, then delete itself
+`buildbox build ./project_dir` -- run container bound to project_dir and run buildscript
+
+Run:
+`buildbox run` -- run container, run build script then 'run' script
+
+How does buildbox know what project you're located in??
+Keep a database.
+Name | Directory | Last edited
+Use a tsv
+
+When calling build:
+First iterate through the database, and then for each directory:
+Check how many of the first characters match
+If match == len(cwd) then use immediately,
+otherwise keep scrolling
+If no match, just say no match?
