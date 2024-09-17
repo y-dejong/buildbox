@@ -1,3 +1,5 @@
+#!/bin/python3
+
 import argparse
 import os
 import subprocess
@@ -16,9 +18,9 @@ def parse_cli_args():
 def parse_boxfile(filename):
     box_data = {
         "setup": [],
-        "prebuild": [],
+        "copy": [],
         "build": [],
-        "run": [],
+        "postbuild": [],
         "dependencies": []
     }
     current_list_name = None
@@ -28,9 +30,9 @@ def parse_boxfile(filename):
             line = line.strip()
             if not line or line.startswith("#"):
                 pass
-            elif line.startswith(("SETUP", "PREBUILD", "BUILD", "RUN", "DEPENDENCIES")):
+            elif line.startswith(("SETUP", "COPY", "BUILD", "POSTBUILD", "DEPENDENCIES")):
                 current_list_name = line.split()[0].lower()
-            elif line.startswith(("BASEIMAGE ", "NAME ")):
+            elif line.startswith(("BASEIMAGE ")):
                 params = line.split(maxsplit=1)
                 box_data[params[0].lower()] = params[1]
 
@@ -40,18 +42,21 @@ def parse_boxfile(filename):
     print(box_data)
     return box_data
 
-def create_podman_image(config, buildscript, runscript):
+def create_podman_image(config, buildscript, postbuildscript):
     dockerfile_contents = f"""FROM {config["baseimage"] if "baseimage" in config else "fedora:latest"}
 
 # Install dependencies
 {"RUN dnf install -y " + " ".join(config["dependencies"]) if len(config["dependencies"]) > 0 else ""}
 
+# Copy files from host
+{'\n'.join([f"COPY {x} /root/{os.path.basename(os.path.abspath(x))}" for x in config["copy"] if os.path.exists(x)])}
+
 # Additional commands from buildbox
-{"\n".join(f"RUN {command}" for command in config["setup"])}
+RUN {" && ".join(f"{command}" for command in config["setup"])}
 
 # Copy scripts
 {f"COPY {buildscript} /root/build.sh" if buildscript else ""}
-{f"COPY {runscript} /root/run.sh" if runscript else ""}
+{"RUN chmod +x /root/build.sh" if buildscript else ""}
 
 # Set working directory
 WORKDIR /root/workspace
@@ -68,10 +73,8 @@ WORKDIR /root/workspace
         image_name = "bb_" + os.path.basename(config["project_dir"]) # TODO: Get last part of path
 
     try:
-        configdir = os.path.expanduser("~/.config/buildbox")
-        os.makedirs(configdir, exist_ok=True)
-        subprocess.run(["podman", "build", "-t", image_name, "-f", scriptname, "--output", os.path.join(configdir, config["name"]), config["project_dir"]], check=True)
-        # TODO add csv entry
+        subprocess.run(["podman", "build", "-t", image_name, "-f", scriptname, config["project_dir"]], check=True)
+
         print("Created image")
     except subprocess.CalledProcessError as e:
         print(f"Error building image: {e}")
@@ -80,7 +83,7 @@ def main():
     args = vars(parse_cli_args())
 
     print(args["command"])
-    if args["command"][0] == "create":
+    if args["command"][0] == "setup":
 
         if len(args["positional"]) > 0 and os.path.isdir(args["positional"][0]):
             project_dir = args["positional"][0]
@@ -101,12 +104,12 @@ def main():
             print("No boxfile found, using default")
             config = {
                 "setup": [],
-                "prebuild": [],
+                "copy": [],
                 "build": [],
-                "run": [],
+                "postbuild": [],
                 "dependencies": []
             }
-        # TODO set defaults like name, base image
+        # set defaults like name, base image
 
         if args["name"]:
             print("Name given in cli args")
@@ -119,28 +122,30 @@ def main():
         config["dependencies"] += args["dependencies"]
 
         if len(config["build"]) > 0:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as script:
+            with open('./bbbuild.sh', mode='w') as script:
+                script.write("#!/bin/bash\n")
                 script.writelines(f"{line}\n" for line in config["build"])
                 buildscript_name = script.name
         else:
             buildscript_name = None
 
-        if len(config["run"]) > 0:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as script:
-                script.writelines(f"{line}\n" for line in config["run"])
-                runscript_name = script.name
-        else:
-            runscript_name = None
+        # if len(config["postbuild"]) > 0:
+        #     with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as script:
+        #         script.writelines(f"{line}\n" for line in config["postbuild"])
+        #         postbuildscript_name = script.name
+        # else:
+        #     postbuildrunscript_name = None
+        # TODO use this feature?
 
-        create_podman_image(config, buildscript_name, runscript_name)
+        create_podman_image(config, buildscript_name, "")
+        os.remove('./bbbuild.sh')
 
-    if args["command"][0] == "build":
-        count = 0
-        while subprocess.run(["podman", "container", "exists", "bb_" + args["positional"][0] + str(count)]) == 1:
-            count += 1
-
-        subprocess.run(["podman", "run", "--rm", "-i", f"bb_{args['positional'][0]}", f"-v{'.'}:{'/root/workspace'}:z",
-                        "source", "/root/build.sh"])
+    elif args["command"][0] == "build":
+        project_dir = args["positional"] if len(args["positional"]) > 0 and os.path.exists(args["positional"][0]) else "."
+        command = ["podman", "run", "--rm", "-it", "-v", f"{os.path.abspath(project_dir)}:{'/root/workspace'}:z",
+                   f"bb_{os.path.basename(os.path.abspath(project_dir))}", "/root/build.sh"]
+        print(' '.join(command))
+        subprocess.run(command)
 
 if __name__ == "__main__":
     main()
