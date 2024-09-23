@@ -19,6 +19,7 @@ def parse_boxfile(filename):
     box_data = {
         "setup": [],
         "copy": [],
+        "env": [],
         "build": [],
         "postbuild": [],
         "dependencies": []
@@ -30,7 +31,7 @@ def parse_boxfile(filename):
             line = line.strip()
             if not line or line.startswith("#"):
                 pass
-            elif line.startswith(("SETUP", "COPY", "BUILD", "POSTBUILD", "DEPENDENCIES")):
+            elif line.startswith(("SETUP", "COPY", "ENV", "BUILD", "POSTBUILD", "DEPENDENCIES")):
                 current_list_name = line.split()[0].lower()
             elif line.startswith(("BASEIMAGE ")):
                 params = line.split(maxsplit=1)
@@ -50,6 +51,7 @@ def create_podman_image(config, buildscript, postbuildscript):
 
 # Copy files from host
 {'\n'.join([f"COPY {x} /root/{os.path.basename(os.path.abspath(x))}" for x in config["copy"] if os.path.exists(x)])}
+{'\n'.join([f"ENV {line}" for line in config["env"]])}
 
 # Additional commands from buildbox
 RUN {" && ".join(f"{command}" for command in config["setup"])}
@@ -105,6 +107,7 @@ def main():
             config = {
                 "setup": [],
                 "copy": [],
+                "env": [],
                 "build": [],
                 "postbuild": [],
                 "dependencies": []
